@@ -116,6 +116,74 @@ class TokenAuthenticator {
   }
 }
 
+// MongoDB API 통신 클래스
+class MongoDataFetcher {
+  constructor(environment, email, password, authenticator) {
+    this.authenticator = authenticator;
+    this.email = email;
+    this.password = password;
+    this.baseUrl = this.getApiBaseUrl(environment);
+    this.accessToken = null;
+    this.memberToken = null;
+  }
+
+  getApiBaseUrl(environment) {
+    const baseUrls = {
+      dev: 'http://localhost:8084',
+      qa: 'http://localhost:8084',
+      staging: 'http://localhost:8084',
+      production: 'http://localhost:8084',
+      local: 'http://localhost:8084',
+    };
+    return baseUrls[environment.toLowerCase()] || baseUrls.local;
+  }
+
+  async authenticate() {
+    const tokens = await this.authenticator.authenticateUser(this.email, this.password);
+    this.accessToken = tokens.accessToken;
+    this.memberToken = tokens.memberToken;
+  }
+
+  getHeaders() {
+    if (!this.accessToken || !this.memberToken) {
+      throw new Error('인증이 필요합니다');
+    }
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${this.accessToken}`,
+      'x-bpo-member-token': this.memberToken,
+    };
+  }
+
+  async fetchClipProgressData(memberGroupId, productId, courseId, startAt, endAt) {
+    const url = `${this.baseUrl}/api/backoffice/course-content/progress`;
+    const params = new URLSearchParams({
+      groupId: memberGroupId,
+      productId: productId,
+      courseId: courseId,
+      startedAt: startAt,
+      endedAt: endAt,
+    });
+
+    try {
+      const response = await fetch(`${url}?${params}`, {
+        method: 'GET',
+        headers: this.getHeaders(),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API 호출 실패: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      console.error('MongoDB 데이터 조회 실패:', error);
+      throw error;
+    }
+  }
+}
+
 // 메타 데이터 조회 클래스
 class MetaFetcher {
   constructor(environment, email, password, authenticator) {
@@ -302,6 +370,20 @@ function parseCSV(text) {
   return rows;
 }
 
+// MongoDB 데이터를 CSV 형태로 변환
+function convertMongoDataToCSVFormat(mongoData) {
+  return mongoData.map(item => ({
+    targetId: item.targetId,
+    productId: item.productId,
+    courseId: item.courseId,
+    courseContentId: item.courseContentId,
+    dailyDate: item.dailyDate,
+    cumulativePlayTime: item.cumulativePlayTime,
+    totalPlayTime: item.totalPlayTime,
+    totalContentPlayTime: item.totalContentPlayTime,
+  }));
+}
+
 function extractRequiredIds(rows) {
   const memberIds = new Set();
   const productIds = new Set();
@@ -467,13 +549,33 @@ export default function CourseClipScriptRunner() {
     setResultCSV(null);
 
     try {
-      addProgress(`입력 파일: ${file.name}`);
+      let rows = [];
       
-      // CSV 파일 읽기
-      const fileContent = await file.text();
-      const rows = parseCSV(fileContent);
-      
-      addProgress(`총 ${rows.length}개 행 읽음`);
+      if (dataSource === 'csv') {
+        addProgress(`입력 파일: ${file.name}`);
+        
+        // CSV 파일 읽기
+        const fileContent = await file.text();
+        rows = parseCSV(fileContent);
+        
+        addProgress(`총 ${rows.length}개 행 읽음`);
+      } else if (dataSource === 'mongo') {
+        addProgress('MongoDB에서 데이터 조회 중...');
+        
+        // MongoDB API 인증
+        const authenticator = new TokenAuthenticator(environment);
+        const mongoFetcher = new MongoDataFetcher(environment, email, password, authenticator);
+        await mongoFetcher.authenticate();
+        addProgress('MongoDB 인증 완료');
+        
+        // MongoDB 데이터 조회
+        const mongoData = await mongoFetcher.fetchClipProgressData(memberGroupId, productId, courseId, startAt, endAt);
+        addProgress(`MongoDB에서 ${mongoData.length}개 데이터 조회 완료`);
+        
+        // MongoDB 데이터를 CSV 형태로 변환
+        rows = convertMongoDataToCSVFormat(mongoData);
+        addProgress(`CSV 형태로 변환 완료: ${rows.length}개 행`);
+      }
       
       // 필요한 ID 추출
       addProgress('필요한 ID 추출 중...');
@@ -485,7 +587,7 @@ export default function CourseClipScriptRunner() {
       const aggregates = aggregateMonthly(rows);
       addProgress(`집계 키 수: ${aggregates.length}`);
       
-      // API 인증
+      // API 인증 (메타 데이터 조회용)
       addProgress('메타 조회(인증)...');
       const authenticator = new TokenAuthenticator(environment);
       const fetcher = new MetaFetcher(environment, email, password, authenticator);
