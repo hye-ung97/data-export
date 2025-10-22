@@ -418,10 +418,21 @@ function generateOutputCSV(aggregates, coursesMap, productsMap, membersMap, cont
 }
 
 export default function CourseClipScriptRunner() {
+  const [dataSource, setDataSource] = useState('csv'); // 'csv' or 'mongo'
   const [file, setFile] = useState(null);
   const [environment, setEnvironment] = useState('staging');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  
+  // MongoDB 연결 정보
+  const [memberGroupId, setMemberGroupId] = useState('');
+  const [productId, setProductId] = useState('');
+  const [courseId, setCourseId] = useState('');
+  const [startAt, setStartAt] = useState('');
+  const [endAt, setEndAt] = useState('');
+  
+  // 날짜 유효성 검사
+  const isDateValid = startAt && endAt && new Date(startAt) <= new Date(endAt);
 
   const memberBatchSize = 50;
   const [isRunning, setIsRunning] = useState(false);
@@ -520,9 +531,22 @@ export default function CourseClipScriptRunner() {
   };
 
   const handleSubmit = () => {
-    if (!file) {
-      setError('입력 CSV 파일을 선택해주세요.');
-      return;
+    if (dataSource === 'csv') {
+      if (!file) {
+        setError('입력 CSV 파일을 선택해주세요.');
+        return;
+      }
+    } else if (dataSource === 'mongo') {
+      if (!memberGroupId || !productId || !courseId || !startAt || !endAt) {
+        setError('MongoDB 연결에 필요한 모든 정보를 입력해주세요.');
+        return;
+      }
+      
+      // 날짜 유효성 검사
+      if (new Date(startAt) > new Date(endAt)) {
+        setError('종료일자는 시작일자보다 이후여야 합니다.');
+        return;
+      }
     }
     
     if (!email || !password) {
@@ -562,35 +586,152 @@ export default function CourseClipScriptRunner() {
           </div>
 
           <div className="space-y-6">
-            {/* 파일 업로드 */}
+            {/* 데이터 소스 선택 */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                입력 CSV 파일
+                데이터 소스 선택
               </label>
-              <div className="relative">
-                <input
-                  type="file"
-                  accept=".csv"
-                  onChange={handleFileChange}
-                  className="hidden"
-                  id="file-upload"
-                  disabled={isRunning}
-                />
-                <label
-                  htmlFor="file-upload"
-                  className={`flex items-center justify-center w-full px-4 py-3 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
-                    file
-                      ? 'border-green-500 bg-green-50'
-                      : 'border-gray-300 hover:border-indigo-500 hover:bg-indigo-50'
-                  } ${isRunning ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <Upload className="w-5 h-5 mr-2 text-gray-600" />
-                  <span className="text-sm text-gray-600">
-                    {file ? file.name : 'summary_progress_product_course_contents.csv 선택'}
-                  </span>
+              <div className="flex space-x-4">
+                <label className="flex items-center">
+                  <input
+                    type="radio"
+                    name="dataSource"
+                    value="csv"
+                    checked={dataSource === 'csv'}
+                    onChange={(e) => setDataSource(e.target.value)}
+                    disabled={isRunning}
+                    className="mr-2"
+                  />
+                  <span className="text-sm text-gray-700">CSV 파일 업로드</span>
+                </label>
+                <label className="flex items-center">
+                  <input
+                    type="radio"
+                    name="dataSource"
+                    value="mongo"
+                    checked={dataSource === 'mongo'}
+                    onChange={(e) => setDataSource(e.target.value)}
+                    disabled={isRunning}
+                    className="mr-2"
+                  />
+                  <span className="text-sm text-gray-700">MongoDB 연결</span>
                 </label>
               </div>
             </div>
+
+            {/* CSV 파일 업로드 */}
+            {dataSource === 'csv' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  입력 CSV 파일
+                </label>
+                <div className="relative">
+                  <input
+                    type="file"
+                    accept=".csv"
+                    onChange={handleFileChange}
+                    className="hidden"
+                    id="file-upload"
+                    disabled={isRunning}
+                  />
+                  <label
+                    htmlFor="file-upload"
+                    className={`flex items-center justify-center w-full px-4 py-3 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
+                      file
+                        ? 'border-green-500 bg-green-50'
+                        : 'border-gray-300 hover:border-indigo-500 hover:bg-indigo-50'
+                    } ${isRunning ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <Upload className="w-5 h-5 mr-2 text-gray-600" />
+                    <span className="text-sm text-gray-600">
+                      {file ? file.name : 'summary_progress_product_course_contents.csv 선택'}
+                    </span>
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {/* MongoDB 연결 정보 */}
+            {dataSource === 'mongo' && (
+              <div className="space-y-4">
+                <h3 className="text-lg font-medium text-gray-800">MongoDB 연결 정보</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      멤버 그룹 ID
+                    </label>
+                    <input
+                      type="text"
+                      value={memberGroupId}
+                      onChange={(e) => setMemberGroupId(e.target.value)}
+                      disabled={isRunning}
+                      placeholder="멤버 그룹 ID를 입력하세요"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:bg-gray-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      상품 ID
+                    </label>
+                    <input
+                      type="text"
+                      value={productId}
+                      onChange={(e) => setProductId(e.target.value)}
+                      disabled={isRunning}
+                      placeholder="상품 ID를 입력하세요"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:bg-gray-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      코스 ID
+                    </label>
+                    <input
+                      type="text"
+                      value={courseId}
+                      onChange={(e) => setCourseId(e.target.value)}
+                      disabled={isRunning}
+                      placeholder="코스 ID를 입력하세요"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:bg-gray-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      시작 날짜
+                    </label>
+                    <input
+                      type="date"
+                      value={startAt}
+                      onChange={(e) => setStartAt(e.target.value)}
+                      disabled={isRunning}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:bg-gray-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      종료 날짜
+                    </label>
+                    <input
+                      type="date"
+                      value={endAt}
+                      onChange={(e) => setEndAt(e.target.value)}
+                      disabled={isRunning}
+                      min={startAt || undefined}
+                      className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:bg-gray-100 ${
+                        startAt && endAt && !isDateValid 
+                          ? 'border-red-300 bg-red-50' 
+                          : 'border-gray-300'
+                      }`}
+                    />
+                    {startAt && endAt && !isDateValid && (
+                      <p className="mt-1 text-sm text-red-600">
+                        종료일자는 시작일자보다 이후여야 합니다.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* 환경 선택 */}
             <div>
@@ -644,7 +785,7 @@ export default function CourseClipScriptRunner() {
             {/* 실행 버튼 */}
             <button
               onClick={handleSubmit}
-              disabled={isRunning || !file || !email || !password}
+              disabled={isRunning || (dataSource === 'csv' && !file) || (dataSource === 'mongo' && (!memberGroupId || !productId || !courseId || !startAt || !endAt || !isDateValid)) || !email || !password}
               className="w-full bg-indigo-600 text-white py-3 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center"
             >
               {isRunning ? (
@@ -716,26 +857,34 @@ export default function CourseClipScriptRunner() {
 
         {/* 사용 안내 */}
         <div className="mt-6 bg-white rounded-lg shadow-lg p-6">
-          <h2 className="font-semibold text-gray-800 mb-3">사용 방법</h2>
+          <h2 className="font-semibold text-gray-800 mb-3">사용 방법 <span className="text-red-600 font-semibold">(VPN 연결 필요)</span></h2>
           <ul className="space-y-2 text-sm text-gray-600">
             <li className="flex items-start">
               <span className="text-indigo-600 mr-2">1.</span>
-              <span>summary_progress_product_course_contents.csv 파일을 업로드합니다</span>
+              <span>데이터 소스를 선택합니다 (CSV 파일 업로드 또는 MongoDB 연결)</span>
             </li>
             <li className="flex items-start">
               <span className="text-indigo-600 mr-2">2.</span>
-              <span>환경을 선택합니다 (기본값: Staging)</span>
+              <span>CSV 선택 시: summary_progress_product_course_contents.csv 파일을 업로드합니다</span>
             </li>
             <li className="flex items-start">
               <span className="text-indigo-600 mr-2">3.</span>
-              <span>Skillflo 인증 정보(이메일, 비밀번호)를 입력합니다</span>
+              <span>MongoDB 선택 시: 멤버 그룹 ID, 상품 ID, 코스 ID, 시작/종료 날짜를 입력합니다 </span>
             </li>
             <li className="flex items-start">
               <span className="text-indigo-600 mr-2">4.</span>
-              <span>"스크립트 실행" 버튼을 클릭하여 집계를 시작합니다</span>
+              <span>환경을 선택합니다 (기본값: Staging)</span>
             </li>
             <li className="flex items-start">
               <span className="text-indigo-600 mr-2">5.</span>
+              <span>Skillflo 인증 정보(이메일, 비밀번호)를 입력합니다</span>
+            </li>
+            <li className="flex items-start">
+              <span className="text-indigo-600 mr-2">6.</span>
+              <span>"스크립트 실행" 버튼을 클릭하여 집계를 시작합니다</span>
+            </li>
+            <li className="flex items-start">
+              <span className="text-indigo-600 mr-2">7.</span>
               <span>완료 후 결과 CSV 파일을 다운로드합니다</span>
             </li>
           </ul>
